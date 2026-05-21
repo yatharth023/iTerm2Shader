@@ -37,6 +37,7 @@ class RenderViewController: NSViewController {
         setupMetalView()
         setupRenderer()
         setupKeyboardMonitoring()
+        setupWindowStateObservers()
 
         print("=== RenderViewController setup complete ===")
     }
@@ -111,12 +112,97 @@ class RenderViewController: NSViewController {
 
         if event.modifierFlags.contains(.command) {
             switch keyCode {
-            case 18: cyclePreset()
+            case 18: cyclePreset() // Cmd+1
+            case 2: renderer?.toggleDiagnostics() // Cmd+D (MILESTONE 4)
             default: renderer?.triggerTypingReaction()
             }
         } else {
             renderer?.triggerTypingReaction()
         }
+    }
+
+    // MILESTONE 5: Window state observers for edge-case resilience
+    private func setupWindowStateObservers() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidMiniaturize),
+            name: NSWindow.didMiniaturizeNotification,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidDeminiaturize),
+            name: NSWindow.didDeminiaturizeNotification,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowOcclusionStateChanged),
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(systemWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+
+        print("Window state observers registered")
+    }
+
+    @objc private func windowDidMiniaturize(_ notification: Notification) {
+        renderer?.pause()
+        metalView?.isPaused = true
+    }
+
+    @objc private func windowDidDeminiaturize(_ notification: Notification) {
+        renderer?.resume()
+        metalView?.isPaused = false
+    }
+
+    @objc private func windowOcclusionStateChanged(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+
+        let isOccluded = !window.occlusionState.contains(.visible)
+        renderer?.handleOcclusionState(isOccluded: isOccluded)
+
+        // Throttle MTKView when occluded
+        if isOccluded {
+            metalView?.preferredFramesPerSecond = 10
+        } else {
+            metalView?.preferredFramesPerSecond = currentPreset.performanceTuning.targetFrameRate
+        }
+    }
+
+    @objc private func systemWillSleep(_ notification: Notification) {
+        print("System going to sleep - pausing renderer")
+        renderer?.pause()
+        metalView?.isPaused = true
+    }
+
+    @objc private func systemDidWake(_ notification: Notification) {
+        print("System woke up - resuming renderer")
+
+        // MILESTONE 5: Metal device recovery after sleep/wake
+        // MTKView and Metal automatically handle device state recovery
+        // Just resume the render loop
+        renderer?.resume()
+        metalView?.isPaused = false
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func cyclePreset() {
