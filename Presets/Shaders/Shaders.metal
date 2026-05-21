@@ -37,6 +37,47 @@ static float hash_shared(float2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
+// Color temperature conversion (Kelvin to RGB tint)
+static float3 applyColorTemperature(float3 color, float temperature) {
+    // Normalize temperature: 6500K is neutral (1.0)
+    float tempNorm = temperature / 6500.0;
+
+    float3 tint;
+    if (tempNorm < 1.0) {
+        // Warm (lower temperature: orange/red tint)
+        tint = float3(1.0, 0.8 + tempNorm * 0.2, 0.6 + tempNorm * 0.4);
+    } else {
+        // Cool (higher temperature: blue tint)
+        float excess = (tempNorm - 1.0) * 0.5; // Scale down the effect
+        tint = float3(1.0 - excess * 0.15, 1.0 - excess * 0.05, 1.0 + excess * 0.2);
+    }
+
+    return color * tint;
+}
+
+// Apply glow/bloom effect
+static float3 applyGlow(float3 color, float glowStrength) {
+    if (glowStrength < 0.01) {
+        return color; // Skip if glow is disabled
+    }
+
+    // Extract luminance
+    float luma = dot(color, float3(0.299, 0.587, 0.114));
+
+    // More aggressive glow threshold and factor
+    float glowThreshold = 0.2; // Lower threshold = more pixels glow
+    float glowFactor = smoothstep(glowThreshold, 1.0, luma) * glowStrength;
+
+    // Strong bloom effect with brightness boost
+    float brightnessMult = 1.0 + glowFactor * 3.0; // 3x brightness boost at max glow
+    float3 bloomColor = color * brightnessMult;
+
+    // Add slight white tint for authentic bloom
+    bloomColor = mix(bloomColor, float3(1.0), glowFactor * 0.3);
+
+    return mix(color, bloomColor, glowFactor * 0.8);
+}
+
 static float noise_shared(float2 p) {
     float2 i = floor(p);
     float2 f = fract(p);
@@ -128,6 +169,12 @@ fragment float4 spaceflight_shader(
 
     // Final brightness
     color *= uniforms.intensity * 0.75;
+
+    // Apply color temperature
+    color = applyColorTemperature(color, uniforms.colorTemperature);
+
+    // Apply glow
+    color = applyGlow(color, uniforms.glow);
 
     return float4(color, 1.0);
 }
@@ -249,6 +296,12 @@ fragment float4 nightsky_shader(
     color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.4)) * uniforms.contrast;
     color *= 0.75;
 
+    // Apply color temperature
+    color = applyColorTemperature(color, uniforms.colorTemperature);
+
+    // Apply glow
+    color = applyGlow(color, uniforms.glow);
+
     return float4(color, 1.0);
 }
 
@@ -342,6 +395,12 @@ fragment float4 morningsky_shader(
     color *= uniforms.intensity;
     color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.3)) * uniforms.contrast;
     color = min(color, float3(0.75));
+
+    // Apply color temperature
+    color = applyColorTemperature(color, uniforms.colorTemperature);
+
+    // Apply glow
+    color = applyGlow(color, uniforms.glow);
 
     return float4(color, 1.0);
 }
@@ -459,6 +518,12 @@ fragment float4 oceanwave_shader(
     color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.45)) * uniforms.contrast;
     color *= 0.72;
 
+    // Apply color temperature
+    color = applyColorTemperature(color, uniforms.colorTemperature);
+
+    // Apply glow
+    color = applyGlow(color, uniforms.glow);
+
     return float4(color, 1.0);
 }
 
@@ -550,6 +615,12 @@ fragment float4 eveningsky_shader(
     color *= uniforms.intensity;
     color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.3)) * uniforms.contrast;
     color = min(color, float3(0.75));
+
+    // Apply color temperature
+    color = applyColorTemperature(color, uniforms.colorTemperature);
+
+    // Apply glow
+    color = applyGlow(color, uniforms.glow);
 
     return float4(color, 1.0);
 }

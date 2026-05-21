@@ -15,6 +15,12 @@ class RenderViewController: NSViewController {
         EveningSkyFlightPreset()
     ]
 
+    // MILESTONE 5: Settings Panel
+    private var settingsPanelViewController: SettingsPanelViewController?
+    private var settingsPanelContainer: NSView?
+    private var isSettingsPanelVisible = false
+    private var isAnimating = false  // Prevent rapid toggle issues
+
     override func loadView() {
         print("=== RenderViewController loadView ===")
 
@@ -113,12 +119,149 @@ class RenderViewController: NSViewController {
         if event.modifierFlags.contains(.command) {
             switch keyCode {
             case 18: cyclePreset() // Cmd+1
-            case 2: renderer?.toggleDiagnostics() // Cmd+D (MILESTONE 4)
+            case 2: renderer?.toggleDiagnostics() // Cmd+D
+            case 43: toggleSettingsPanel() // Cmd+, (MILESTONE 5)
             default: renderer?.triggerTypingReaction()
             }
         } else {
             renderer?.triggerTypingReaction()
         }
+    }
+
+    // MILESTONE 5: Settings Panel Toggle with Slide-in Animation
+    private func toggleSettingsPanel() {
+        // Prevent toggling during animation
+        guard !isAnimating else {
+            print("⚠️ Animation in progress, ignoring toggle")
+            return
+        }
+
+        if isSettingsPanelVisible {
+            hideSettingsPanel()
+        } else {
+            showSettingsPanel()
+        }
+    }
+
+    private func showSettingsPanel() {
+        // Prevent multiple opens
+        guard !isSettingsPanelVisible && !isAnimating else {
+            print("⚠️ Panel already visible or animating")
+            return
+        }
+
+        // Mark as animating immediately
+        isAnimating = true
+        isSettingsPanelVisible = true  // Set state BEFORE animation
+
+        let currentParams = SettingsManager.shared.loadParameters(defaultParameters: currentPreset.defaultParameters)
+
+        let settingsVC = SettingsPanelViewController(
+            currentParameters: currentParams,
+            allPresets: allPresets
+        )
+
+        // Real-time parameter updates
+        settingsVC.onParametersChanged = { [weak self] newParameters in
+            self?.renderer?.updateParameters(newParameters)
+        }
+
+        // Preset switching
+        settingsVC.onPresetChanged = { [weak self] newPreset in
+            guard let self = self else { return }
+            self.currentPreset = newPreset
+            self.renderer?.switchPreset(newPreset, view: self.metalView)
+            SettingsManager.shared.activePresetName = newPreset.name
+        }
+
+        // Close callback
+        settingsVC.onClose = { [weak self] in
+            self?.hideSettingsPanel()
+        }
+
+        self.settingsPanelViewController = settingsVC
+
+        // Create container view for slide-in animation
+        let panelWidth: CGFloat = 400
+        let container = NSView(frame: NSRect(
+            x: view.bounds.width,
+            y: 0,
+            width: panelWidth,
+            height: view.bounds.height
+        ))
+        container.wantsLayer = true
+        container.autoresizingMask = [.minXMargin, .height] // Stay pinned to right edge and resize vertically
+        container.layer?.shadowColor = NSColor.black.cgColor
+        container.layer?.shadowOpacity = 0.5
+        container.layer?.shadowOffset = NSSize(width: -2, height: 0)
+        container.layer?.shadowRadius = 8
+
+        addChild(settingsVC)
+        container.addSubview(settingsVC.view)
+        settingsVC.view.frame = container.bounds
+        settingsVC.view.autoresizingMask = [.width, .height]
+
+        view.addSubview(container)
+        self.settingsPanelContainer = container
+
+        // Update preset selection AFTER view is loaded
+        settingsVC.updateCurrentPreset(presetName: currentPreset.name)
+
+        // Slide-in animation
+        NSAnimationContext.runAnimationGroup({ [weak self] context in
+            guard let self = self else { return }
+            context.duration = 0.3
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+
+            container.frame = NSRect(
+                x: self.view.bounds.width - panelWidth,
+                y: 0,
+                width: panelWidth,
+                height: self.view.bounds.height
+            )
+        }, completionHandler: { [weak self] in
+            self?.isAnimating = false
+            print("✅ Settings panel opened")
+        })
+    }
+
+    private func hideSettingsPanel() {
+        // Prevent multiple closes
+        guard isSettingsPanelVisible && !isAnimating, let container = settingsPanelContainer else {
+            print("⚠️ Panel not visible or animating")
+            return
+        }
+
+        // Mark as animating and update state immediately
+        isAnimating = true
+        isSettingsPanelVisible = false  // Set state BEFORE animation
+
+        // Slide-out animation
+        NSAnimationContext.runAnimationGroup({ [weak self] context in
+            guard let self = self else { return }
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+
+            container.frame = NSRect(
+                x: self.view.bounds.width,
+                y: 0,
+                width: container.bounds.width,
+                height: self.view.bounds.height
+            )
+        }, completionHandler: { [weak self] in
+            guard let self = self else { return }
+
+            // Clean up UI elements
+            container.removeFromSuperview()
+            self.settingsPanelViewController?.removeFromParent()
+            self.settingsPanelViewController = nil
+            self.settingsPanelContainer = nil
+            self.isAnimating = false
+
+            print("✅ Settings panel closed")
+        })
     }
 
     // MILESTONE 5: Window state observers for edge-case resilience
