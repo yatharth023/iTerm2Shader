@@ -8,7 +8,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     private var pipelineState: MTLRenderPipelineState?
     private var uniformBuffer: MTLBuffer?
 
-    private let preset: ShaderPreset
+    private var preset: ShaderPreset
     private var parameters: PresetParameters
 
     private var startTime: CFTimeInterval
@@ -20,7 +20,10 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
         self.device = device
         self.preset = preset
-        self.parameters = preset.defaultParameters
+
+        let savedParams = SettingsManager.shared.loadParameters(defaultParameters: preset.defaultParameters)
+        self.parameters = savedParams
+
         self.startTime = CACurrentMediaTime()
 
         guard let queue = device.makeCommandQueue() else { return nil }
@@ -33,7 +36,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         createUniformBuffer()
 
         view.preferredFramesPerSecond = preset.performanceTuning.targetFrameRate
-        print("MetalRenderer initialized successfully - Target: \(preset.performanceTuning.targetFrameRate) FPS")
+        print("MetalRenderer initialized - Preset: \(preset.name), Target: \(preset.performanceTuning.targetFrameRate) FPS")
     }
 
     private func createPipelineState(view: MTKView) -> Bool {
@@ -72,6 +75,31 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         print("Uniform buffer created: \(uniformSize) bytes")
     }
 
+    func switchPreset(_ newPreset: ShaderPreset, view: MTKView) {
+        print("Switching preset to: \(newPreset.name)")
+
+        self.preset = newPreset
+
+        let savedParams = SettingsManager.shared.loadParameters(defaultParameters: newPreset.defaultParameters)
+        self.parameters = savedParams
+
+        SettingsManager.shared.activePresetName = newPreset.name
+        SettingsManager.shared.saveParameters(savedParams)
+
+        guard createPipelineState(view: view) else {
+            print("ERROR: Failed to recreate pipeline state for new preset")
+            return
+        }
+
+        view.preferredFramesPerSecond = preset.performanceTuning.targetFrameRate
+        print("Preset switched successfully to: \(newPreset.name)")
+    }
+
+    func updateParameters(_ newParameters: PresetParameters) {
+        self.parameters = newParameters
+        SettingsManager.shared.saveParameters(newParameters)
+    }
+
     func triggerTypingReaction() {
         preset.onTypingReaction(currentReactionValue: &typingReactionValue)
     }
@@ -79,10 +107,8 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     private func updateUniforms(drawableSize: CGSize) {
         let currentTime = Float(CACurrentMediaTime() - startTime)
 
-        // Exponential decay for silky-smooth easing (no harsh stops)
         typingReactionValue *= reactionDecayFactor
 
-        // Clamp to zero when very small to prevent floating point drift
         if typingReactionValue < 0.001 {
             typingReactionValue = 0.0
         }

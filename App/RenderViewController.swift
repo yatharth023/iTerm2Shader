@@ -7,6 +7,14 @@ class RenderViewController: NSViewController {
     private var renderer: MetalRenderer!
     private var currentPreset: ShaderPreset!
 
+    private let allPresets: [ShaderPreset] = [
+        SpaceflightPreset(),
+        NightSkyFlightPreset(),
+        MorningSkyFlightPreset(),
+        OceanWaveFlightPreset(),
+        EveningSkyFlightPreset()
+    ]
+
     override func loadView() {
         print("=== RenderViewController loadView ===")
 
@@ -25,11 +33,24 @@ class RenderViewController: NSViewController {
         super.viewDidLoad()
         print("=== RenderViewController viewDidLoad ===")
 
+        loadSavedPreset()
         setupMetalView()
         setupRenderer()
         setupKeyboardMonitoring()
 
         print("=== RenderViewController setup complete ===")
+    }
+
+    private func loadSavedPreset() {
+        let savedPresetName = SettingsManager.shared.activePresetName
+
+        if let preset = allPresets.first(where: { $0.name == savedPresetName }) {
+            currentPreset = preset
+            print("Loaded saved preset: \(savedPresetName)")
+        } else {
+            currentPreset = SpaceflightPreset()
+            print("No saved preset found, using default: Spaceflight")
+        }
     }
 
     private func setupMetalView() {
@@ -60,9 +81,7 @@ class RenderViewController: NSViewController {
 
     private func setupRenderer() {
         print("Setting up renderer...")
-
-        currentPreset = SpaceflightPreset()
-        print("Preset: \(currentPreset.name)")
+        print("Current preset: \(currentPreset.name)")
 
         guard let renderer = MetalRenderer(
             view: metalView,
@@ -80,12 +99,38 @@ class RenderViewController: NSViewController {
 
     private func setupKeyboardMonitoring() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            print("Key pressed: \(event.keyCode)")
-            self?.renderer?.triggerTypingReaction()
+            self?.handleKeyPress(event: event)
             return event
         }
 
         print("Keyboard monitoring enabled")
+    }
+
+    private func handleKeyPress(event: NSEvent) {
+        let keyCode = event.keyCode
+
+        if event.modifierFlags.contains(.command) {
+            switch keyCode {
+            case 18: cyclePreset()
+            default: renderer?.triggerTypingReaction()
+            }
+        } else {
+            renderer?.triggerTypingReaction()
+        }
+    }
+
+    private func cyclePreset() {
+        guard let currentIndex = allPresets.firstIndex(where: { $0.name == currentPreset.name }) else {
+            return
+        }
+
+        let nextIndex = (currentIndex + 1) % allPresets.count
+        let nextPreset = allPresets[nextIndex]
+
+        print("Cycling to next preset: \(nextPreset.name)")
+
+        currentPreset = nextPreset
+        renderer?.switchPreset(nextPreset, view: metalView)
     }
 
     override func viewDidAppear() {

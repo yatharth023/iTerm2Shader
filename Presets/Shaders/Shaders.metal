@@ -27,83 +27,46 @@ vertex VertexOut vertex_main(uint vertexID [[vertex_id]]) {
     return out;
 }
 
-// Shared utility functions
-static float hash(float2 p) {
+// ============================================================================
+// SHARED UTILITY FUNCTIONS (marked static to prevent linker conflicts)
+// ============================================================================
+
+static float hash_shared(float2 p) {
     float3 p3 = fract(float3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.x + p3.y) * p3.z);
 }
 
-static float noise(float2 p) {
+static float noise_shared(float2 p) {
     float2 i = floor(p);
     float2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
 
-    float a = hash(i);
-    float b = hash(i + float2(1.0, 0.0));
-    float c = hash(i + float2(0.0, 1.0));
-    float d = hash(i + float2(1.0, 1.0));
+    float a = hash_shared(i);
+    float b = hash_shared(i + float2(1.0, 0.0));
+    float c = hash_shared(i + float2(0.0, 1.0));
+    float d = hash_shared(i + float2(1.0, 1.0));
 
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// Spaceflight Preset Implementation
-struct Star {
-    float3 position;
-    float brightness;
-    float size;
-};
+static float fbm_shared(float2 p, int octaves) {
+    float value = 0.0;
+    float amplitude = 0.5;
+    float frequency = 1.0;
 
-static Star generateStar(float2 seed, float time, float speed, float depth) {
-    Star star;
-
-    float h1 = hash(seed);
-    float h2 = hash(seed + float2(127.1, 311.7));
-    float h3 = hash(seed + float2(269.5, 183.3));
-
-    // Distribution across a standard 3D coordinate space
-    star.position.x = (h1 * 2.0 - 1.0) * 2.0;
-    star.position.y = (h2 * 2.0 - 1.0) * 2.0;
-
-    // Continuous depth cycle tracking
-    float baseZ = h3 * depth;
-    star.position.z = fmod(baseZ - time * speed * 0.2, depth);
-    if (star.position.z < 0.0) {
-        star.position.z += depth;
+    for (int i = 0; i < octaves; i++) {
+        value += amplitude * noise_shared(p * frequency);
+        frequency *= 2.0;
+        amplitude *= 0.5;
     }
 
-    star.brightness = 0.4 + h1 * 0.6;
-    star.size = 1.5 + h2 * 3.5;
-
-    return star;
+    return value;
 }
 
-static float renderStar(float2 uv, Star star, float2 resolution, float typingReaction, float depth) {
-    float aspect = resolution.x / resolution.y;
-    float2 aspectUV = (uv - 0.5) * float2(aspect, 1.0);
-
-    // Division-safe perspective projection calculation
-    float zOffset = star.position.z + 0.01;
-    float velocityPulse = 1.0 + typingReaction * 0.4;
-    float2 projectedPos = (star.position.xy / zOffset) * 0.5 * velocityPulse;
-
-    float dist = length(aspectUV - projectedPos);
-
-    // Scaled up baseline pixel radius multiplier
-    float radius = ((star.size * 5.0) / resolution.y) * (1.0 / zOffset);
-
-    // Depth-based dynamic brightness - stars brighten as they approach
-    float proximityFade = 1.0 - (star.position.z / depth);
-    float dynamicBrightness = star.brightness * mix(1.0, 1.8, proximityFade * proximityFade);
-
-    // Widened smoothstep core distribution for soft anti-aliased edges
-    float core = smoothstep(radius, radius * 0.2, dist) * dynamicBrightness;
-
-    // Amplified exponential glow footprint for premium cinematic feel
-    float glow = exp(-dist * 8.0 / (radius + 0.001)) * dynamicBrightness * 0.25;
-
-    return core + glow;
-}
+// ============================================================================
+// PRESET 1: SPACEFLIGHT
+// ============================================================================
 
 fragment float4 spaceflight_shader(
     VertexOut in [[stage_in]],
@@ -111,40 +74,482 @@ fragment float4 spaceflight_shader(
 ) {
     float2 uv = in.uv;
     float aspect = uniforms.resolution.x / uniforms.resolution.y;
+    float2 p = (uv - 0.5) * float2(aspect, 1.0);
 
     float3 color = float3(0.0);
 
-    int starCount = 330;
+    // Ultra optimized: Only 50 stars for buttery smooth 60 FPS
+    int starCount = 50;
 
     for (int i = 0; i < starCount; i++) {
-        float2 seed = float2(float(i) * 0.1, float(i) * 0.2);
-        Star star = generateStar(seed, uniforms.time, uniforms.speed, uniforms.depth);
+        float fi = float(i);
 
-        float starValue = renderStar(uv, star, uniforms.resolution, uniforms.typingReaction, uniforms.depth);
+        // Pre-computed hash values (minimize hash calls)
+        float h1 = hash_shared(float2(fi * 12.345, fi * 67.890));
+        float h2 = hash_shared(float2(fi * 34.567, fi * 89.012));
+        float h3 = hash_shared(float2(fi * 56.789, fi * 23.456));
 
-        float depthFade = 1.0 - (star.position.z / uniforms.depth);
-        depthFade = pow(depthFade, 1.5);
+        // Star base position
+        float2 starBase = float2(h1 * 5.0 - 2.5, h2 * 5.0 - 2.5);
 
-        float3 starColor = float3(0.9, 0.95, 1.0);
-        if (star.brightness > 0.7) {
-            starColor = float3(0.95, 0.9, 1.0);
-        }
+        // Animate depth
+        float z = fmod(h3 + uniforms.time * uniforms.speed * 0.2, 1.0);
 
-        color += starColor * starValue * depthFade * uniforms.intensity;
+        // Fast perspective (avoid division where possible)
+        float zInv = 1.0 / (z * 2.0 + 0.3);
+        float2 starPos = starBase * zInv * 0.3;
+
+        // Quick distance
+        float dist = length(p - starPos);
+
+        // Skip far stars immediately
+        if (dist > 0.4) continue;
+
+        // Simple star with size
+        float starSize = 0.015 * zInv;
+        float star = max(0.0, (starSize - dist) / starSize);
+
+        // Brightness based on depth
+        star *= (1.0 - z) * 1.3;
+
+        color += star * float3(0.95, 0.97, 1.0);
     }
 
-    // Vignette for edge darkening (terminal readability)
-    float vignette = 1.0 - length((uv - 0.5) * float2(aspect, 1.0)) * 0.4;
+    // Space background
+    color += float3(0.01, 0.02, 0.05);
+
+    // Fast vignette
+    float edge = length((uv - 0.5) * float2(aspect, 1.0));
+    color *= (1.0 - edge * 0.35);
+
+    // Center calm
+    float center = length(uv - 0.5) * 1.5;
+    color *= mix(0.7, 1.0, center * center);
+
+    // Final brightness
+    color *= uniforms.intensity * 0.75;
+
+    return float4(color, 1.0);
+}
+
+// ============================================================================
+// PRESET 2: NIGHT-SKY-FLIGHT
+// ============================================================================
+
+static float cloudLayer_nightsky_wispy(float2 p, float time, float speed) {
+    float2 drift = float2(time * speed * 0.12, time * speed * 0.04);
+
+    // Wispy, realistic clouds with good definition
+    float clouds = fbm_shared(p * 1.2 + drift, 4);
+    clouds += fbm_shared(p * 0.6 - drift * 0.8, 3) * 0.5;
+
+    // Create realistic cloud shapes with clear edges
+    clouds = smoothstep(0.4, 0.65, clouds);
+    return clouds;
+}
+
+fragment float4 nightsky_shader(
+    VertexOut in [[stage_in]],
+    constant ShaderUniforms& uniforms [[buffer(0)]]
+) {
+    float2 uv = in.uv;
+    float aspect = uniforms.resolution.x / uniforms.resolution.y;
+    float2 p = (uv - 0.5) * float2(aspect, 1.0) * uniforms.depth;
+
+    // Full-screen wispy cloud layers
+    float clouds1 = cloudLayer_nightsky_wispy(p, uniforms.time, uniforms.speed);
+    float clouds2 = cloudLayer_nightsky_wispy(p * 0.75 + float2(100.0, 50.0), uniforms.time * 1.15, uniforms.speed * 0.9);
+    float clouds3 = cloudLayer_nightsky_wispy(p * 1.25 - float2(70.0, 35.0), uniforms.time * 0.85, uniforms.speed * 1.05);
+
+    float cloudDensity = (clouds1 * 0.45 + clouds2 * 0.35 + clouds3 * 0.2);
+
+    // Brighter night sky so everything is visible
+    float3 skyDeep = float3(0.10, 0.14, 0.24);        // Visible deep blue
+    float3 skyMid = float3(0.15, 0.20, 0.32);         // Mid blue
+    float3 skyHorizon = float3(0.18, 0.24, 0.38);     // Lighter horizon
+
+    float verticalGradient = uv.y;
+    float3 skyBase = mix(skyDeep, skyMid, smoothstep(0.0, 0.5, verticalGradient));
+    skyBase = mix(skyBase, skyHorizon, smoothstep(0.5, 1.0, verticalGradient));
+
+    // Much brighter clouds that are clearly visible
+    float3 cloudDark = float3(0.22, 0.26, 0.38);      // Visible cloud shadows
+    float3 cloudLight = float3(0.38, 0.45, 0.60);     // Bright moonlit clouds
+
+    float3 cloudColor = mix(cloudDark, cloudLight, cloudDensity * 0.6 + 0.4);
+
+    // Blend clouds with sky
+    float3 color = mix(skyBase, cloudColor, cloudDensity * 0.75);
+
+    // BRIGHT VISIBLE STARS with obvious twinkling - evenly distributed
+    float stars = 0.0;
+    for (int i = 0; i < 50; i++) {
+        float2 starSeed = float2(float(i) * 14.329, float(i) * 31.721);
+
+        // Generate evenly distributed random positions across entire screen
+        float starX = (hash_shared(starSeed) * 2.0 - 1.0) * aspect * uniforms.depth;
+        float starY = (hash_shared(starSeed + float2(127.1, 311.7)) * 2.0 - 1.0) * uniforms.depth;
+        float2 starPos = float2(starX, starY);
+
+        float starDist = length(p - starPos);
+
+        // Larger star sizes so they're visible
+        float starSize = 0.015 + hash_shared(starSeed + float2(1.0, 0.0)) * 0.025;
+
+        // Very obvious twinkling
+        float twinklePhase = float(i) * 2.5;
+        float twinkle = sin(uniforms.time * uniforms.speed * 3.0 + twinklePhase) * 0.5 + 0.5;
+        twinkle = twinkle * twinkle; // Stronger twinkle
+
+        // Bright stars
+        float starBrightness = 0.8 + hash_shared(starSeed + float2(3.0, 0.0)) * 0.2;
+
+        // Stars slightly dimmed by clouds but still visible
+        float cloudFade = 1.0 - cloudDensity * 0.6;
+
+        float star = smoothstep(starSize, 0.0, starDist) * twinkle * starBrightness * cloudFade;
+        stars += star;
+    }
+
+    // Very bright white stars
+    color += stars * float3(1.0, 1.0, 1.0) * 1.2;
+
+    // Add more background stars - evenly distributed
+    float bgStars = 0.0;
+    for (int j = 0; j < 30; j++) {
+        float2 bgSeed = float2(float(j) * 7.123 + 100.0, float(j) * 19.456 + 200.0);
+
+        // Generate evenly distributed random positions for background stars
+        float bgX = (hash_shared(bgSeed) * 2.0 - 1.0) * aspect * uniforms.depth;
+        float bgY = (hash_shared(bgSeed + float2(269.5, 183.3)) * 2.0 - 1.0) * uniforms.depth;
+        float2 bgPos = float2(bgX, bgY);
+
+        float bgDist = length(p - bgPos);
+        float bgSize = 0.010 + hash_shared(bgSeed + float2(1.0, 0.0)) * 0.012;
+        float bgTwinkle = sin(uniforms.time * uniforms.speed * 2.5 + float(j) * 1.7) * 0.3 + 0.7;
+        bgStars += smoothstep(bgSize, 0.0, bgDist) * bgTwinkle * (1.0 - cloudDensity * 0.5);
+    }
+    color += bgStars * float3(0.9, 0.95, 1.0) * 0.6;
+
+    // Typing reactivity - star burst
+    float reactiveShimmer = stars * uniforms.typingReaction * 0.2;
+    color += reactiveShimmer * float3(0.3, 0.35, 0.4);
+
+    // Edge vignette
+    float vignette = 1.0 - length((uv - 0.5) * float2(aspect, 1.0)) * 0.35;
+    vignette = smoothstep(0.4, 1.0, vignette);
+    color *= vignette;
+
+    // Center text calm zone
+    float centerCalm = 1.0 - exp(-length((uv - 0.5) * 2.0));
+    color *= mix(0.45, 1.0, centerCalm);
+
+    // Final intensity and contrast
+    color *= uniforms.intensity;
+    color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.4)) * uniforms.contrast;
+    color *= 0.75;
+
+    return float4(color, 1.0);
+}
+
+// ============================================================================
+// PRESET 3: MORNING-SKY-FLIGHT
+// ============================================================================
+
+static float cloudLayer_morningsky_realistic(float2 p, float time, float speed) {
+    float2 drift = float2(time * speed * 0.08, time * speed * 0.03);
+
+    // Create realistic fluffy cloud shapes with sharp edges
+    float clouds = fbm_shared(p * 1.4 + drift, 4);
+
+    // Add detail and definition
+    clouds += fbm_shared(p * 2.8 + drift * 1.5, 3) * 0.3;
+
+    // Sharp cloud edges for realistic cumulus look
+    clouds = smoothstep(0.45, 0.65, clouds);
+
+    return clouds;
+}
+
+fragment float4 morningsky_shader(
+    VertexOut in [[stage_in]],
+    constant ShaderUniforms& uniforms [[buffer(0)]]
+) {
+    float2 uv = in.uv;
+    float aspect = uniforms.resolution.x / uniforms.resolution.y;
+    float2 p = (uv - 0.5) * float2(aspect, 1.0) * uniforms.depth;
+
+    // Realistic cloud layers with clear definition
+    float clouds1 = cloudLayer_morningsky_realistic(p, uniforms.time, uniforms.speed);
+    float clouds2 = cloudLayer_morningsky_realistic(p * 0.7 + float2(100.0, 50.0), uniforms.time * 1.2, uniforms.speed * 0.85);
+    float clouds3 = cloudLayer_morningsky_realistic(p * 1.3 - float2(60.0, 75.0), uniforms.time * 0.8, uniforms.speed * 1.1);
+
+    // Lower density so clouds are distinct, not dusty
+    float cloudDensity = (clouds1 * 0.4 + clouds2 * 0.35 + clouds3 * 0.25);
+
+    // Beautiful blue morning sky across entire screen
+    float3 skyDeep = float3(0.45, 0.60, 0.80);        // Rich morning blue
+    float3 skyLight = float3(0.60, 0.72, 0.88);       // Light morning blue
+
+    // Subtle vertical gradient for depth
+    float3 skyBase = mix(skyDeep, skyLight, uv.y * 0.3);
+
+    // Sun position at top right
+    float2 sunPos = float2(0.75, 0.15); // Top right corner
+    float2 toSun = uv - sunPos;
+    toSun.x *= aspect; // Correct for aspect ratio
+
+    // Distance from sun position
+    float distToSun = length(toSun);
+
+    // Golden orange sunshine glow from top right
+    float sunGlow = exp(-distToSun * 1.8) * 0.6;
+    float3 sunColor = float3(1.0, 0.75, 0.45); // Warm golden-orange
+
+    // Apply sun glow to sky
+    skyBase += sunGlow * sunColor;
+
+    // Realistic fluffy white clouds with sun-kissed edges
+    float3 cloudBright = float3(1.0, 0.98, 0.92);     // Bright white clouds
+    float3 cloudMid = float3(0.90, 0.88, 0.82);       // Slightly warm mid-tones
+    float3 cloudShadow = float3(0.70, 0.68, 0.65);    // Soft gray shadows
+
+    // Multi-level cloud shading for 3D look
+    float3 cloudColor = mix(cloudShadow, cloudMid, smoothstep(0.2, 0.5, cloudDensity));
+    cloudColor = mix(cloudColor, cloudBright, smoothstep(0.5, 0.8, cloudDensity));
+
+    // Clouds closer to sun get golden tint
+    float sunInfluence = exp(-distToSun * 2.5) * cloudDensity;
+    cloudColor += sunInfluence * float3(0.4, 0.25, 0.1);
+
+    // Blend clouds with sky - less blending for distinct clouds
+    float3 color = mix(skyBase, cloudColor, cloudDensity * 0.6);
+
+    // Typing reactivity - gentle warmth
+    float reactiveGlow = cloudDensity * uniforms.typingReaction * 0.1;
+    color += reactiveGlow * float3(0.3, 0.25, 0.2);
+
+    // Edge vignette
+    float vignette = 1.0 - length((uv - 0.5) * float2(aspect, 1.0)) * 0.38;
+    vignette = smoothstep(0.35, 1.0, vignette);
+    color *= vignette;
+
+    // Center text calm zone
+    float centerCalm = 1.0 - exp(-length((uv - 0.5) * 2.0));
+    color *= mix(0.45, 1.0, centerCalm);
+
+    // Final intensity and contrast
+    color *= uniforms.intensity;
+    color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.3)) * uniforms.contrast;
+    color = min(color, float3(0.75));
+
+    return float4(color, 1.0);
+}
+
+// ============================================================================
+// PRESET 4: OCEAN-WAVE-FLIGHT
+// ============================================================================
+
+// Multi-directional Gerstner-style wave cascade with golden ratio frequencies
+static float oceanWave_gerstner(float2 p, float time, float speed) {
+    const float PHI = 1.618033988749; // Golden rataight io
+    float height = 0.0;
+
+    // Wave 1: Primary direction
+    float freq1 = 1.0;
+    float2 dir1 = float2(1.0, 0.3);
+    height += sin(dot(p, dir1) * freq1 + time * speed * 0.35) * 0.35;
+
+    // Wave 2: Golden ratio frequency, rotated direction
+    float freq2 = PHI;
+    float2 dir2 = float2(0.7, 0.9);
+    height += sin(dot(p, dir2) * freq2 - time * speed * 0.28) * 0.25;
+
+    // Wave 3: Second golden ratio step
+    float freq3 = PHI * PHI;
+    float2 dir3 = float2(-0.5, 1.0);
+    height += sin(dot(p, dir3) * freq3 + time * speed * 0.42) * 0.18;
+
+    // Wave 4: Tertiary detail waves
+    float freq4 = PHI * PHI * PHI;
+    float2 dir4 = float2(0.9, -0.4);
+    height += sin(dot(p, dir4) * freq4 - time * speed * 0.38) * 0.12;
+
+    // Wave 5: High-frequency chop
+    float freq5 = 4.5;
+    float2 dir5 = float2(-0.8, 0.6);
+    height += sin(dot(p, dir5) * freq5 + time * speed * 0.5) * 0.08;
+
+    // Noise layers for organic variation
+    height += noise_shared(p * 0.8 + time * speed * 0.12) * 0.15;
+    height += noise_shared(p * 2.2 - time * speed * 0.09) * 0.08;
+
+    return height;
+}
+
+fragment float4 oceanwave_shader(
+    VertexOut in [[stage_in]],
+    constant ShaderUniforms& uniforms [[buffer(0)]]
+) {
+    float2 uv = in.uv;
+    float aspect = uniforms.resolution.x / uniforms.resolution.y;
+    float2 p = (uv - 0.5) * float2(aspect, 1.0);
+
+    // Full-screen perspective with subtle depth scaling
+    // Distance from center creates natural depth perception
+    float distFromCenter = length(p);
+    float depthScale = 1.0 + distFromCenter * 0.5; // Subtle scaling based on distance
+
+    // Apply depth scaling to wave coordinates
+    float2 waveCoord = p * depthScale * uniforms.depth * 0.8;
+    float waveHeight = oceanWave_gerstner(waveCoord, uniforms.time, uniforms.speed);
+
+    // Normalize wave height to [0, 1] range
+    waveHeight = waveHeight * 0.5 + 0.5;
+
+    // Calculate wave normal for specular lighting (simplified derivative)
+    float epsilon = 0.01;
+    float dxHeight = oceanWave_gerstner(waveCoord + float2(epsilon, 0.0), uniforms.time, uniforms.speed);
+    float dyHeight = oceanWave_gerstner(waveCoord + float2(0.0, epsilon), uniforms.time, uniforms.speed);
+    float dx = (dxHeight - (waveHeight * 2.0 - 1.0)) / epsilon;
+    float dy = (dyHeight - (waveHeight * 2.0 - 1.0)) / epsilon;
+    float3 normal = normalize(float3(-dx * 8.0, -dy * 8.0, 1.0));
+
+    // Specular highlight (diamond-like water sparkle)
+    float3 viewDir = normalize(float3(0.0, 0.0, 1.0));
+    float3 lightDir = normalize(float3(0.3, -0.4, 0.8)); // Elevated light source
+    float3 reflectDir = reflect(-lightDir, normal);
+    float specular = pow(max(dot(reflectDir, viewDir), 0.0), 32.0);
+
+    // Crest highlights - broader range, sharper peaks
+    float crestHighlight = smoothstep(0.5, 0.9, waveHeight) * 0.6;
+
+    // Ocean color gradient with depth
+    float3 oceanDeep = float3(0.06, 0.10, 0.18);
+    float3 oceanMid = float3(0.12, 0.22, 0.32);
+    float3 oceanShallow = float3(0.18, 0.32, 0.48);
+
+    // Multi-step gradient for richer color
+    float3 baseColor = mix(oceanDeep, oceanMid, smoothstep(0.3, 0.6, waveHeight));
+    baseColor = mix(baseColor, oceanShallow, smoothstep(0.6, 0.85, waveHeight));
+
+    float3 color = baseColor;
+    color += crestHighlight * float3(0.4, 0.5, 0.6);
+    color += specular * float3(0.9, 0.95, 1.0) * 0.7; // Bright specular sparkle
+
+    // Subtle depth darkening at edges (replaces harsh horizon fade)
+    float edgeDarken = 1.0 - smoothstep(0.0, 1.5, distFromCenter) * 0.3;
+    color *= edgeDarken;
+
+    // Typing reactivity - ripple distortion
+    float reactiveRipple = sin(waveHeight * 15.0 + uniforms.time * 4.0) * uniforms.typingReaction * 0.1;
+    color += reactiveRipple * float3(0.2, 0.3, 0.4);
+
+    // Edge vignette
+    float vignette = 1.0 - length((uv - 0.5) * float2(aspect, 1.0)) * 0.42;
     vignette = smoothstep(0.3, 1.0, vignette);
     color *= vignette;
 
-    // Center calm zone - 70% intensity in center (terminal readability)
+    // Center text calm zone
     float centerCalm = 1.0 - exp(-length((uv - 0.5) * 2.0));
-    color *= mix(0.7, 1.0, centerCalm);
+    color *= mix(0.45, 1.0, centerCalm);
 
-    // Low contrast and intensity cap (terminal readability)
-    color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.5)) * uniforms.contrast;
-    color *= 0.6;
+    // Final intensity and contrast
+    color *= uniforms.intensity;
+    color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.45)) * uniforms.contrast;
+    color *= 0.72;
+
+    return float4(color, 1.0);
+}
+
+// ============================================================================
+// PRESET 5: EVENING-SKY-FLIGHT
+// ============================================================================
+
+static float cloudLayer_eveningsky(float2 p, float time, float speed) {
+    float2 drift = float2(time * speed * 0.09, time * speed * 0.03);
+
+    // Soft evening clouds with good definition
+    float clouds = fbm_shared(p * 1.3 + drift, 4);
+    clouds += fbm_shared(p * 2.5 + drift * 1.4, 3) * 0.4;
+
+    clouds = smoothstep(0.4, 0.7, clouds);
+    return clouds;
+}
+
+fragment float4 eveningsky_shader(
+    VertexOut in [[stage_in]],
+    constant ShaderUniforms& uniforms [[buffer(0)]]
+) {
+    float2 uv = in.uv;
+    float aspect = uniforms.resolution.x / uniforms.resolution.y;
+    float2 p = (uv - 0.5) * float2(aspect, 1.0) * uniforms.depth;
+
+    // Realistic evening cloud layers
+    float clouds1 = cloudLayer_eveningsky(p, uniforms.time, uniforms.speed);
+    float clouds2 = cloudLayer_eveningsky(p * 0.72 + float2(90.0, 45.0), uniforms.time * 1.1, uniforms.speed * 0.9);
+    float clouds3 = cloudLayer_eveningsky(p * 1.28 - float2(65.0, 70.0), uniforms.time * 0.85, uniforms.speed * 1.08);
+
+    float cloudDensity = (clouds1 * 0.45 + clouds2 * 0.35 + clouds3 * 0.2);
+
+    // Real evening sky - deep blue transitioning to warm sunset colors
+    float verticalGradient = uv.y;
+
+    // Base blue evening sky
+    float3 skyTop = float3(0.18, 0.28, 0.50);         // Deep evening blue (dark)
+    float3 skyMid = float3(0.28, 0.38, 0.58);         // Mid evening blue
+    float3 skyLower = float3(0.40, 0.45, 0.62);       // Lighter blue near horizon
+
+    float3 skyBase = mix(skyTop, skyMid, smoothstep(0.0, 0.5, verticalGradient));
+    skyBase = mix(skyBase, skyLower, smoothstep(0.5, 1.0, verticalGradient));
+
+    // Sunset position at bottom right
+    float2 sunPos = float2(0.85, 0.88); // Bottom right corner
+    float2 toSun = uv - sunPos;
+    toSun.x *= aspect; // Correct for aspect ratio
+
+    // Distance from sun position
+    float distToSun = length(toSun);
+
+    // Smooth golden-orange sunset glow from bottom right (like morning-sky-flight)
+    float sunGlow = exp(-distToSun * 1.8) * 0.7;
+    float3 sunColor = float3(1.0, 0.55, 0.30); // Warm golden-orange
+
+    // Apply sun glow to sky
+    skyBase += sunGlow * sunColor;
+
+    // Evening clouds - white/gray with warm tint near sunset
+    float3 cloudDark = float3(0.45, 0.45, 0.52);      // Cool evening gray
+    float3 cloudMid = float3(0.70, 0.68, 0.70);       // Light gray
+    float3 cloudBright = float3(0.92, 0.88, 0.85);    // Bright white
+
+    float3 cloudColor = mix(cloudDark, cloudMid, smoothstep(0.25, 0.55, cloudDensity));
+    cloudColor = mix(cloudColor, cloudBright, smoothstep(0.55, 0.85, cloudDensity));
+
+    // Clouds near sunset get warm orange glow
+    float cloudSunInfluence = exp(-distToSun * 2.5) * cloudDensity * 0.7;
+    cloudColor += cloudSunInfluence * float3(0.6, 0.3, 0.15);
+
+    // Blend clouds with sky
+    float3 color = mix(skyBase, cloudColor, cloudDensity * 0.65);
+
+    // Typing reactivity - warm glow
+    float reactiveGlow = cloudDensity * uniforms.typingReaction * 0.12;
+    color += reactiveGlow * float3(0.4, 0.25, 0.15);
+
+    // Edge vignette
+    float vignette = 1.0 - length((uv - 0.5) * float2(aspect, 1.0)) * 0.38;
+    vignette = smoothstep(0.35, 1.0, vignette);
+    color *= vignette;
+
+    // Center text calm zone
+    float centerCalm = 1.0 - exp(-length((uv - 0.5) * 2.0));
+    color *= mix(0.45, 1.0, centerCalm);
+
+    // Final intensity and contrast
+    color *= uniforms.intensity;
+    color = color * (1.0 - uniforms.contrast) + pow(color, float3(1.3)) * uniforms.contrast;
+    color = min(color, float3(0.75));
 
     return float4(color, 1.0);
 }
