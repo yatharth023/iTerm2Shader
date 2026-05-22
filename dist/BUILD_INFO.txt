@@ -1,0 +1,11 @@
+Build Information
+==================
+Project: PremiumTerminalShader
+Version: 2026.05.22
+Configuration: Release
+Build Date: Fri May 22 12:21:06 IST 2026
+SHA256: 873cdb697429fee335a13a7ab3e04758295b503e30444f5280bdefb5405e671b
+
+Installation:
+  brew tap yatharthkhattri/tap
+  brew install --cask iterm2-shader-cli
