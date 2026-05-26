@@ -91,3 +91,52 @@ Temporary Items
 
 # Claude Code memory (optional - remove if you want to track memory)
 .claude/
+
+# Distribution artifacts (binaries should not be in Git, only in releases)
+dist/*.dSYM
+dist/*.swiftmodule/
+dist/Debug/
+dist/PremiumTerminalShader.app
+dist/PremiumTerminalShader.app.dSYM
+dist/*.tar.gz
+dist/*.zip
+
+# Temporary build files
+*.air
+*.metallib.tmp
+
+# Runtime files
+/tmp/
+*.log
+
+# macOS generated files
+*.dylib
+*__preview.dylib
+*.debug.dylib
+
+# Code signing artifacts
+dist/PremiumTerminalShader.app/Contents/_CodeSignature/
+dist/PremiumTerminalShader.app/Contents/MacOS/*.dylib
+
+# Test and utility scripts (already deleted, but ignore if recreated)
+test_*.sh
+shader-control.sh
+add_files_to_xcode.py
+
+# Old documentation (already deleted, but ignore if recreated)
+BACKGROUND_FIX.md
+BRIGHTNESS_FIX.md
+FINAL_ARCHITECTURE.md
+FIXES_APPLIED.md
+HOMEBREW_CHANGES_NEEDED.md
+ITERM2_INTEGRATION_FIX.md
+ITERM2_SETTINGS_GUIDE.md
+KEYBOARD_SHORTCUTS.md
+MENU_BAR_CONTROLS.md
+MILESTONE_7_COMPLETE.md
+PERFORMANCE_OPTIMIZATIONS.md
+SIMPLE_CLI_GUIDE.md
+QUICK_START.md
+
+# Git commit guide (temporary file)
+GIT_COMMIT_GUIDE.md

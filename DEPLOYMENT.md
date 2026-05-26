@@ -190,6 +190,7 @@ https://github.com/yatharthkhattri/iTerm2ShaderCLI/issues
 
 ---
 
+
 ## Step 4: Create Homebrew Tap
 
 ### 4.1 Create Tap Repository
