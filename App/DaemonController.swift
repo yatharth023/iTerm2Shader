@@ -1,8 +1,8 @@
-import Cocoa
+import Foundation
 import Metal
 
-// MILESTONE 7: Daemon orchestration layer
-// Coordinates headless rendering, frame export, iTerm2 sync, and keyboard monitoring
+// Pure headless daemon controller - No AppKit dependencies
+// Coordinates Metal rendering, frame export, iTerm2 sync, and UNIX signal handling
 
 class DaemonController {
 
@@ -11,7 +11,7 @@ class DaemonController {
     private var iTerm2Bridge: ITerm2Bridge?
 
     private var renderTimer: Timer?
-    private let targetFPS: Double = 30.0  // Reduced from 60 for better performance
+    private let targetFPS: Double = 30.0
     private var frameCount: Int = 0
 
     private let allPresets: [ShaderPreset] = [
@@ -22,16 +22,18 @@ class DaemonController {
         EveningSkyFlightPreset()
     ]
 
-    private var currentPreset: ShaderPreset!
+    private var currentPresetIndex: Int = 0
+    private var currentPreset: ShaderPreset {
+        return allPresets[currentPresetIndex]
+    }
 
-    // Settings panel (spawned on demand) - DISABLED
-    // private var settingsPanelWindow: NSWindow?
-    // private var settingsPanelViewController: SettingsPanelViewController?
-
-    // Status bar menu - REMOVED (too laggy, not working properly)
+    // Dispatch source for signal handling
+    private var signalSourceUSR1: DispatchSourceSignal?
+    private var signalSourceUSR2: DispatchSourceSignal?
+    private var signalSourceTERM: DispatchSourceSignal?
 
     init?() {
-        print("DaemonController initializing...")
+        print("Initializing daemon controller...")
 
         // Load saved preset
         loadSavedPreset()
@@ -71,42 +73,48 @@ class DaemonController {
             print("⚠️  WARNING: iTerm2 is not running - background sync will not work")
         }
 
-        // Setup signal handler for preset changes
-        setupSignalHandler()
+        // Setup UNIX signal handlers
+        setupSignalHandlers()
 
-        // Setup keyboard monitoring (for typing reaction only)
-        setupKeyboardMonitoring()
-
-        print("=== DaemonController initialized ===")
+        print("✅ Daemon controller initialized")
         print("Current preset: \(currentPreset.name)")
         print("")
-        print("To change presets, use commands:")
-        print("  kill -USR1 <pid>  # Next preset")
-        print("  kill -USR2 <pid>  # Previous preset")
-        print("")
-        print("Daemon PID: \(ProcessInfo.processInfo.processIdentifier)")
-        print("")
+
         listAvailablePresets()
     }
 
     deinit {
         stop()
+        cleanupSignalHandlers()
     }
+
+    // MARK: - Preset Management
 
     private func loadSavedPreset() {
         let savedPresetName = SettingsManager.shared.activePresetName
 
-        if let preset = allPresets.first(where: { $0.name == savedPresetName }) {
-            currentPreset = preset
+        if let index = allPresets.firstIndex(where: { $0.name == savedPresetName }) {
+            currentPresetIndex = index
             print("Loaded saved preset: \(savedPresetName)")
         } else {
-            currentPreset = SpaceflightPreset()
-            print("No saved preset found, using default: Spaceflight")
+            currentPresetIndex = 0
+            print("No saved preset found, using default: \(allPresets[0].name)")
         }
     }
 
+    private func listAvailablePresets() {
+        print("Available presets:")
+        for (index, preset) in allPresets.enumerated() {
+            let marker = index == currentPresetIndex ? "→" : " "
+            print("  \(marker) \(index + 1). \(preset.name)")
+        }
+        print("")
+    }
+
+    // MARK: - Render Loop
+
     func start() {
-        print("Starting daemon render loop at \(targetFPS) FPS...")
+        print("Starting render loop at \(targetFPS) FPS...")
 
         let interval = 1.0 / targetFPS
 
@@ -114,18 +122,23 @@ class DaemonController {
             self?.renderFrame()
         }
 
-        renderTimer?.tolerance = 0.001  // 1ms tolerance for precise timing
+        renderTimer?.tolerance = 0.001  // 1ms tolerance
 
-        print("Render loop started")
+        // Add to main run loop
+        if let timer = renderTimer {
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        print("✅ Render loop started")
     }
 
     func stop() {
-        print("Stopping daemon render loop...")
+        print("Stopping render loop...")
 
         renderTimer?.invalidate()
         renderTimer = nil
 
-        print("Daemon stopped")
+        print("✅ Render loop stopped")
     }
 
     private func renderFrame() {
@@ -142,7 +155,9 @@ class DaemonController {
 
         // Export texture to PNG file
         guard exporter.exportFrame(texture: texture) else {
-            print("ERROR: Failed to export frame \(frameCount)")
+            if frameCount % 100 == 0 {
+                print("⚠️  Frame export failed at frame \(frameCount)")
+            }
             return
         }
 
@@ -153,103 +168,104 @@ class DaemonController {
 
         // Log every 30 frames (once per second at 30 FPS)
         if frameCount % 30 == 0 {
-            print("Rendered \(frameCount) frames - Preset: \(currentPreset.name)")
+            print("[\(frameCount) frames] Preset: \(currentPreset.name)")
         }
     }
 
-    // MARK: - Signal Handler (for preset switching via CLI)
+    // MARK: - UNIX Signal Handling
 
-    private func setupSignalHandler() {
-        // USR1 = Next preset
-        signal(SIGUSR1) { _ in
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: NSNotification.Name("NextPreset"), object: nil)
-            }
+    private func setupSignalHandlers() {
+        // Ignore default signal behavior (prevent termination)
+        signal(SIGUSR1, SIG_IGN)
+        signal(SIGUSR2, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+
+        // Setup dispatch source for SIGUSR1 (next preset)
+        signalSourceUSR1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+        signalSourceUSR1?.setEventHandler { [weak self] in
+            self?.nextPreset()
         }
+        signalSourceUSR1?.resume()
 
-        // USR2 = Previous preset
-        signal(SIGUSR2) { _ in
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: NSNotification.Name("PreviousPreset"), object: nil)
-            }
+        // Setup dispatch source for SIGUSR2 (previous preset)
+        signalSourceUSR2 = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        signalSourceUSR2?.setEventHandler { [weak self] in
+            self?.previousPreset()
         }
+        signalSourceUSR2?.resume()
 
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NextPreset"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.cyclePreset(forward: true)
+        // Setup dispatch source for SIGTERM (graceful shutdown)
+        signalSourceTERM = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        signalSourceTERM?.setEventHandler { [weak self] in
+            self?.gracefulShutdown()
         }
+        signalSourceTERM?.resume()
 
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("PreviousPreset"),
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.cyclePreset(forward: false)
-        }
-
-        print("✅ Signal handler setup complete")
+        print("✅ UNIX signal handlers configured:")
+        print("   SIGUSR1 (signal 30) → Next preset")
+        print("   SIGUSR2 (signal 31) → Previous preset")
+        print("   SIGTERM (signal 15) → Graceful shutdown")
     }
 
-    private func listAvailablePresets() {
-        print("Available presets:")
-        for (index, preset) in allPresets.enumerated() {
-            let marker = preset.name == currentPreset.name ? "→" : " "
-            print("  \(marker) \(index + 1). \(preset.name)")
-        }
+    private func cleanupSignalHandlers() {
+        signalSourceUSR1?.cancel()
+        signalSourceUSR2?.cancel()
+        signalSourceTERM?.cancel()
+
+        signalSourceUSR1 = nil
+        signalSourceUSR2 = nil
+        signalSourceTERM = nil
+    }
+
+    // MARK: - Preset Switching
+
+    private func nextPreset() {
+        let oldPreset = currentPreset.name
+
+        currentPresetIndex = (currentPresetIndex + 1) % allPresets.count
+        let newPreset = currentPreset
+
+        switchToCurrentPreset(from: oldPreset, to: newPreset.name)
+    }
+
+    private func previousPreset() {
+        let oldPreset = currentPreset.name
+
+        currentPresetIndex = (currentPresetIndex - 1 + allPresets.count) % allPresets.count
+        let newPreset = currentPreset
+
+        switchToCurrentPreset(from: oldPreset, to: newPreset.name)
+    }
+
+    private func switchToCurrentPreset(from: String, to: String) {
         print("")
-    }
+        print("🔄 Preset Switch Signal Received")
+        print("   From: \(from)")
+        print("   To:   \(to)")
 
-    // MARK: - Keyboard Monitoring
+        // Switch renderer to new preset
+        headlessRenderer?.switchPreset(currentPreset)
 
-    private func setupKeyboardMonitoring() {
-        // Keyboard monitoring is now ONLY for typing reaction
-        // Menu bar provides reliable controls for preset/settings
+        // Save to settings
+        SettingsManager.shared.activePresetName = currentPreset.name
 
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
-            self?.headlessRenderer?.triggerTypingReaction()
-        }
-
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.headlessRenderer?.triggerTypingReaction()
-            return event
-        }
-
-        print("Keyboard monitoring enabled (typing reaction only)")
-        print("Use menu bar icon for preset switching and settings")
-    }
-
-    private func cyclePreset(forward: Bool = true) {
-        guard let currentIndex = allPresets.firstIndex(where: { $0.name == currentPreset.name }) else {
-            return
-        }
-
-        let nextIndex: Int
-        if forward {
-            nextIndex = (currentIndex + 1) % allPresets.count
-        } else {
-            nextIndex = (currentIndex - 1 + allPresets.count) % allPresets.count
-        }
-
-        let nextPreset = allPresets[nextIndex]
-
-        print("")
-        print("=== Switching Preset ===")
-        print("From: \(currentPreset.name)")
-        print("To:   \(nextPreset.name)")
-        print("")
-
-        currentPreset = nextPreset
-        headlessRenderer?.switchPreset(nextPreset)
-        SettingsManager.shared.activePresetName = nextPreset.name
-
-        // Force iTerm2 to refresh background
+        // Force iTerm2 refresh
         iTerm2Bridge?.forceUpdateViaAppleScript()
+
+        print("✅ Switched to preset: \(to)")
+        print("")
 
         listAvailablePresets()
     }
 
-    // MARK: - Settings Panel - REMOVED (not working properly)
+    private func gracefulShutdown() {
+        print("")
+        print("🛑 SIGTERM received - Graceful shutdown initiated")
+
+        stop()
+
+        print("✅ Shutdown complete")
+
+        exit(0)
+    }
 }
