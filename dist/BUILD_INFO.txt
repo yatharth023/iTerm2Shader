@@ -1,10 +1,10 @@
 Build Information
 ==================
 Project: PremiumTerminalShader
-Version: 2026.05.26
+Version: 2026.05.27
 Configuration: Release
-Build Date: Tue May 26 23:24:47 IST 2026
-SHA256: bb8dc2e267ea18af77ed17abbbab051f6961c6e16e98847e07cb3b343d2037f1
+Build Date: Wed May 27 13:41:23 IST 2026
+SHA256: a6f1d5c9720730ad48e062f1b26ccb6d0dab8de4b4aa501d4d4337a163d55e14
 
 Installation:
   brew tap yatharthkhattri/tap

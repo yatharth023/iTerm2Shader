@@ -51,8 +51,9 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func createPipelineState(view: MTKView) -> Bool {
-        guard let library = device.makeDefaultLibrary() else {
-            print("ERROR: Failed to create Metal library")
+        guard let libraryURL = Bundle.main.url(forResource: "default", withExtension: "metallib"),
+              let library = try? device.makeLibrary(URL: libraryURL) else {
+            print("ERROR: Failed to create Metal library from bundle path")
             return false
         }
 
