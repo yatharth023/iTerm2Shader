@@ -25,11 +25,23 @@ print("  kill -TERM \(ProcessInfo.processInfo.processIdentifier)  # Graceful shu
 print("")
 
 // Orphan lifecycle monitor: if parent terminal exits, getppid() becomes 1 (launchd)
-let parentCheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+// Grace period: ignore checks for first 15 seconds to survive shell fork handoff
+let bootTime = Date()
+var orphanHitCount = 0
+let requiredConsecutiveHits = 3
+
+let parentCheckTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
+    guard Date().timeIntervalSince(bootTime) > 15.0 else { return }
+
     if getppid() == 1 {
-        print("Parent process exited (orphaned) — shutting down cleanly")
-        daemon.stop()
-        exit(0)
+        orphanHitCount += 1
+        if orphanHitCount >= requiredConsecutiveHits {
+            print("Parent process exited (orphaned) — shutting down cleanly")
+            daemon.stop()
+            exit(0)
+        }
+    } else {
+        orphanHitCount = 0
     }
 }
 RunLoop.main.add(parentCheckTimer, forMode: .common)

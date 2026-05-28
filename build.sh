@@ -16,7 +16,7 @@ PROJECT_NAME="iterm2-shader-engine"
 CONFIGURATION="release"
 BUILD_DIR="build"
 DIST_DIR="dist"
-VERSION="2026.05.27"
+VERSION="2026.05.28"
 
 # Clean previous builds
 echo -e "\n${YELLOW}[1/5] Cleaning previous builds...${NC}"
