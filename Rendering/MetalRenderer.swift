@@ -51,9 +51,12 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func createPipelineState(view: MTKView) -> Bool {
-        guard let libraryURL = Bundle.main.url(forResource: "default", withExtension: "metallib"),
-              let library = try? device.makeLibrary(URL: libraryURL) else {
-            print("ERROR: Failed to create Metal library from bundle path")
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let metallibURL = executableURL.deletingLastPathComponent().appendingPathComponent("default.metallib")
+
+        guard FileManager.default.fileExists(atPath: metallibURL.path),
+              let library = try? device.makeLibrary(URL: metallibURL) else {
+            print("ERROR: Failed to create Metal library from: \(metallibURL.path)")
             return false
         }
 

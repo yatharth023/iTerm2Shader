@@ -1,10 +1,16 @@
 Build Information
 ==================
-Project: PremiumTerminalShader
+Project: iterm2-shader-engine
 Version: 2026.05.27
-Configuration: Release
-Build Date: Wed May 27 13:41:23 IST 2026
-SHA256: a6f1d5c9720730ad48e062f1b26ccb6d0dab8de4b4aa501d4d4337a163d55e14
+Configuration: release
+Build Date: Thu May 28 23:20:20 IST 2026
+SHA256: 359d5fc256aedcc0e3494ced074be352cf906f45b75f02718b1674ab4a70b292
+Architecture: arm64 (Apple Silicon)
+Target: macOS 13.0+
+
+Contents:
+  - iterm2-shader-engine (standalone binary)
+  - default.metallib (compiled Metal shaders)
 
 Installation:
   brew tap yatharthkhattri/tap

@@ -1,94 +1,113 @@
 #!/bin/bash
 
-set -e  # Exit on error
+set -e
 
-# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}  Building PremiumTerminalShader${NC}"
+echo -e "${GREEN}  Building iterm2-shader-engine${NC}"
+echo -e "${GREEN}  (Standalone UNIX Binary)${NC}"
 echo -e "${GREEN}========================================${NC}"
 
-# Configuration
-PROJECT_NAME="PremiumTerminalShader"
-SCHEME_NAME="PremiumTerminalShader"
-CONFIGURATION="Release"
+PROJECT_NAME="iterm2-shader-engine"
+CONFIGURATION="release"
 BUILD_DIR="build"
-ARCHIVE_PATH="${BUILD_DIR}/${PROJECT_NAME}.xcarchive"
-EXPORT_PATH="${BUILD_DIR}/Export"
 DIST_DIR="dist"
-VERSION=$(date +"%Y.%m.%d")
+VERSION="2026.05.27"
 
 # Clean previous builds
-echo -e "\n${YELLOW}[1/6] Cleaning previous builds...${NC}"
+echo -e "\n${YELLOW}[1/5] Cleaning previous builds...${NC}"
 rm -rf "${BUILD_DIR}"
 rm -rf "${DIST_DIR}"
 mkdir -p "${BUILD_DIR}"
 mkdir -p "${DIST_DIR}"
 
-# Build the project (using default DerivedData location for reliability)
-echo -e "\n${YELLOW}[2/6] Building ${SCHEME_NAME} (${CONFIGURATION})...${NC}"
-xcodebuild \
-    -project "${PROJECT_NAME}.xcodeproj" \
-    -scheme "${SCHEME_NAME}" \
-    -configuration "${CONFIGURATION}" \
-    clean build \
-    CODE_SIGN_IDENTITY="-" \
-    CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGNING_ALLOWED=NO \
-    ONLY_ACTIVE_ARCH=NO \
-    > "${BUILD_DIR}/build.log" 2>&1
+# Collect all Swift source files
+echo -e "\n${YELLOW}[2/5] Compiling Metal shaders...${NC}"
+
+# Compile .metal -> .metallib
+xcrun metal -c Presets/Shaders/Shaders.metal -o "${BUILD_DIR}/Shaders.air"
+xcrun metallib "${BUILD_DIR}/Shaders.air" -o "${BUILD_DIR}/default.metallib"
+
+echo -e "${GREEN}✅ Metal library compiled${NC}"
+
+# Compile Swift sources into a standalone binary
+echo -e "\n${YELLOW}[3/5] Compiling Swift sources...${NC}"
+
+SWIFT_FILES=(
+    App/main.swift
+    App/DaemonController.swift
+    App/Settings/SettingsManager.swift
+    Rendering/HeadlessMetalRenderer.swift
+    Rendering/MetalRenderer.swift
+    Rendering/FrameExporter.swift
+    Rendering/ITerm2Bridge.swift
+    Rendering/ShaderTypes.swift
+    Presets/ShaderPreset.swift
+    Presets/SpaceflightPreset.swift
+    Presets/NightSkyFlightPreset.swift
+    Presets/MorningSkyFlightPreset.swift
+    Presets/OceanWaveFlightPreset.swift
+    Presets/EveningSkyFlightPreset.swift
+)
+
+swiftc \
+    -O \
+    -whole-module-optimization \
+    -import-objc-header Rendering/ShaderTypes.h \
+    -sdk "$(xcrun --show-sdk-path)" \
+    -target arm64-apple-macos13.0 \
+    -framework Metal \
+    -framework MetalKit \
+    -framework CoreGraphics \
+    -framework Foundation \
+    -framework AppKit \
+    -framework ImageIO \
+    -framework UniformTypeIdentifiers \
+    -o "${BUILD_DIR}/${PROJECT_NAME}" \
+    "${SWIFT_FILES[@]}" \
+    2>&1 | tee "${BUILD_DIR}/build.log"
 
 if [ $? -ne 0 ]; then
-    echo -e "${RED}❌ Build failed! Check ${BUILD_DIR}/build.log for details${NC}"
-    tail -50 "${BUILD_DIR}/build.log"
+    echo -e "${RED}❌ Build failed! Check ${BUILD_DIR}/build.log${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✅ Build succeeded!${NC}"
+echo -e "${GREEN}✅ Binary compiled successfully${NC}"
 
-# Locate the built app (using default DerivedData path)
-echo -e "\n${YELLOW}[3/6] Locating built application...${NC}"
+# Verify the binary
+echo -e "\n${YELLOW}[4/5] Verifying binary...${NC}"
 
-# Try multiple possible locations
-DERIVED_DATA_BASE="${HOME}/Library/Developer/Xcode/DerivedData"
-APP_PATH=$(find "${DERIVED_DATA_BASE}" -name "${PROJECT_NAME}.app" -path "*/Build/Products/${CONFIGURATION}/${PROJECT_NAME}.app" -type d 2>/dev/null | head -1)
-
-if [ -z "${APP_PATH}" ] || [ ! -d "${APP_PATH}" ]; then
-    echo -e "${RED}❌ Application not found${NC}"
-    echo -e "${YELLOW}Searching in DerivedData...${NC}"
-    find "${DERIVED_DATA_BASE}" -name "${PROJECT_NAME}.app" -type d 2>/dev/null | head -5
+if [ ! -f "${BUILD_DIR}/${PROJECT_NAME}" ]; then
+    echo -e "${RED}❌ Binary not found at ${BUILD_DIR}/${PROJECT_NAME}${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✅ Found: ${APP_PATH}${NC}"
+file "${BUILD_DIR}/${PROJECT_NAME}"
+echo -e "${GREEN}✅ Binary verified${NC}"
 
-# Verify the app structure
-echo -e "\n${YELLOW}[4/6] Verifying application structure...${NC}"
-if [ ! -f "${APP_PATH}/Contents/MacOS/${PROJECT_NAME}" ]; then
-    echo -e "${RED}❌ Executable not found in app bundle${NC}"
-    exit 1
-fi
+# Package for distribution
+echo -e "\n${YELLOW}[5/5] Packaging distribution...${NC}"
 
-echo -e "${GREEN}✅ Application structure valid${NC}"
+# Copy binary and metallib to dist
+cp "${BUILD_DIR}/${PROJECT_NAME}" "${DIST_DIR}/"
+cp "${BUILD_DIR}/default.metallib" "${DIST_DIR}/"
 
-# Copy to dist directory
-echo -e "\n${YELLOW}[5/6] Preparing distribution package...${NC}"
-cp -R "${APP_PATH}" "${DIST_DIR}/"
+# Make binary executable
+chmod +x "${DIST_DIR}/${PROJECT_NAME}"
 
-# Create tarball for Homebrew
+# Create tarball
 cd "${DIST_DIR}"
-TARBALL_NAME="${PROJECT_NAME}-${VERSION}.tar.gz"
-tar -czf "${TARBALL_NAME}" "${PROJECT_NAME}.app"
+TARBALL_NAME="PremiumTerminalShader-${VERSION}.tar.gz"
+tar -czf "${TARBALL_NAME}" "${PROJECT_NAME}" "default.metallib"
 cd ..
 
 echo -e "${GREEN}✅ Created tarball: ${DIST_DIR}/${TARBALL_NAME}${NC}"
 
-# Generate SHA256 for Homebrew formula
-echo -e "\n${YELLOW}[6/6] Generating SHA256 checksum...${NC}"
+# Generate SHA256
 SHA256=$(shasum -a 256 "${DIST_DIR}/${TARBALL_NAME}" | awk '{print $1}')
 
 echo -e "${GREEN}✅ SHA256: ${SHA256}${NC}"
@@ -98,15 +117,12 @@ echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}  Build Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "\nDistribution files:"
-echo -e "  📦 App bundle: ${DIST_DIR}/${PROJECT_NAME}.app"
-echo -e "  📦 Tarball:    ${DIST_DIR}/${TARBALL_NAME}"
-echo -e "\nHomebrew Formula Info:"
+echo -e "  Binary:    ${DIST_DIR}/${PROJECT_NAME}"
+echo -e "  Metallib:  ${DIST_DIR}/default.metallib"
+echo -e "  Tarball:   ${DIST_DIR}/${TARBALL_NAME}"
+echo -e "\nHomebrew Cask Info:"
 echo -e "  Version: ${VERSION}"
 echo -e "  SHA256:  ${SHA256}"
-echo -e "\n${YELLOW}Next steps:${NC}"
-echo -e "  1. Upload tarball to GitHub releases"
-echo -e "  2. Update Homebrew formula with new version and SHA256"
-echo -e "  3. Test installation: brew install --cask iterm2-shader-cli"
 
 # Save build info
 cat > "${DIST_DIR}/BUILD_INFO.txt" << EOF
@@ -117,6 +133,12 @@ Version: ${VERSION}
 Configuration: ${CONFIGURATION}
 Build Date: $(date)
 SHA256: ${SHA256}
+Architecture: arm64 (Apple Silicon)
+Target: macOS 13.0+
+
+Contents:
+  - ${PROJECT_NAME} (standalone binary)
+  - default.metallib (compiled Metal shaders)
 
 Installation:
   brew tap yatharthkhattri/tap

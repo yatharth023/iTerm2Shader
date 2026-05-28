@@ -1,10 +1,11 @@
 import Foundation
 
-// Pure CLI daemon - No AppKit, no GUI, no windows
+// Pure CLI daemon - No AppKit GUI, no .app bundle
 // Runs as a standard UNIX background process with signal handling
 
-print("=== iTerm2 Shader CLI Daemon Starting ===")
+print("=== iTerm2 Shader Engine Starting ===")
 print("PID: \(ProcessInfo.processInfo.processIdentifier)")
+print("Parent PID: \(getppid())")
 print("")
 
 // Create and start the daemon controller
@@ -15,13 +16,23 @@ guard let daemon = DaemonController() else {
 
 daemon.start()
 
-print("✅ Daemon running successfully")
+print("Daemon running successfully")
 print("")
 print("Signal controls:")
 print("  kill -USR1 \(ProcessInfo.processInfo.processIdentifier)  # Next preset")
 print("  kill -USR2 \(ProcessInfo.processInfo.processIdentifier)  # Previous preset")
 print("  kill -TERM \(ProcessInfo.processInfo.processIdentifier)  # Graceful shutdown")
 print("")
+
+// Orphan lifecycle monitor: if parent terminal exits, getppid() becomes 1 (launchd)
+let parentCheckTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+    if getppid() == 1 {
+        print("Parent process exited (orphaned) — shutting down cleanly")
+        daemon.stop()
+        exit(0)
+    }
+}
+RunLoop.main.add(parentCheckTimer, forMode: .common)
 
 // Keep the main thread alive with a RunLoop
 RunLoop.main.run()
