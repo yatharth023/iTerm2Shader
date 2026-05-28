@@ -3,8 +3,8 @@ Build Information
 Project: iterm2-shader-engine
 Version: 2026.05.28
 Configuration: release
-Build Date: Thu May 28 23:59:44 IST 2026
-SHA256: a4fd1a6462c1bd7da7f7fe6f28baff2f2173557c192179f72b94160ccbdd9d45
+Build Date: Fri May 29 00:12:34 IST 2026
+SHA256: 96261f7b5ea9bda607409703fe2364af9bc5be4f597875f86cea830ee7023118
 Architecture: arm64 (Apple Silicon)
 Target: macOS 13.0+
 

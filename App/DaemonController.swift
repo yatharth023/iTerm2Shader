@@ -31,6 +31,8 @@ class DaemonController {
     private var signalSourceUSR1: DispatchSourceSignal?
     private var signalSourceUSR2: DispatchSourceSignal?
     private var signalSourceTERM: DispatchSourceSignal?
+    private let signalQueue = DispatchQueue(label: "com.iterm2shader.signals")
+    private var isProcessingSignal = false
 
     init?() {
         print("Initializing daemon controller...")
@@ -175,36 +177,39 @@ class DaemonController {
     // MARK: - UNIX Signal Handling
 
     private func setupSignalHandlers() {
-        // Ignore default signal behavior (prevent termination)
         signal(SIGUSR1, SIG_IGN)
         signal(SIGUSR2, SIG_IGN)
         signal(SIGTERM, SIG_IGN)
 
-        // Setup dispatch source for SIGUSR1 (next preset)
-        signalSourceUSR1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+        // USR1/USR2 dispatch to a dedicated serial queue to avoid blocking main RunLoop
+        signalSourceUSR1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: signalQueue)
         signalSourceUSR1?.setEventHandler { [weak self] in
-            self?.nextPreset()
+            self?.safePresetSwitch { self?.nextPreset() }
         }
         signalSourceUSR1?.resume()
 
-        // Setup dispatch source for SIGUSR2 (previous preset)
-        signalSourceUSR2 = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: .main)
+        signalSourceUSR2 = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: signalQueue)
         signalSourceUSR2?.setEventHandler { [weak self] in
-            self?.previousPreset()
+            self?.safePresetSwitch { self?.previousPreset() }
         }
         signalSourceUSR2?.resume()
 
-        // Setup dispatch source for SIGTERM (graceful shutdown)
         signalSourceTERM = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         signalSourceTERM?.setEventHandler { [weak self] in
             self?.gracefulShutdown()
         }
         signalSourceTERM?.resume()
 
-        print("✅ UNIX signal handlers configured:")
-        print("   SIGUSR1 (signal 30) → Next preset")
-        print("   SIGUSR2 (signal 31) → Previous preset")
-        print("   SIGTERM (signal 15) → Graceful shutdown")
+        print("UNIX signal handlers configured")
+    }
+
+    private func safePresetSwitch(_ action: @escaping () -> Void) {
+        guard !isProcessingSignal else { return }
+        isProcessingSignal = true
+        DispatchQueue.main.async { [weak self] in
+            action()
+            self?.isProcessingSignal = false
+        }
     }
 
     private func cleanupSignalHandlers() {
