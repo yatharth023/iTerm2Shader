@@ -1,9 +1,6 @@
 import Foundation
 import Metal
 
-// Pure headless daemon controller - No AppKit dependencies
-// Coordinates Metal rendering, frame export, iTerm2 sync, and UNIX signal handling
-
 class DaemonController {
 
     private var headlessRenderer: HeadlessMetalRenderer?
@@ -27,20 +24,19 @@ class DaemonController {
         return allPresets[currentPresetIndex]
     }
 
-    // Dispatch source for signal handling
+    // Signal handling — dedicated GCD sources on a utility queue
     private var signalSourceUSR1: DispatchSourceSignal?
     private var signalSourceUSR2: DispatchSourceSignal?
     private var signalSourceTERM: DispatchSourceSignal?
-    private let signalQueue = DispatchQueue(label: "com.iterm2shader.signals")
-    private var isProcessingSignal = false
+    private let signalQueue = DispatchQueue(label: "com.shader.signalQueue", qos: .utility)
+    private let presetSwapQueue = DispatchQueue(label: "com.shader.presetSwap", qos: .userInitiated)
+    private var isSwitchingPreset: Bool = false
 
     init?() {
         print("Initializing daemon controller...")
 
-        // Load saved preset
         loadSavedPreset()
 
-        // Initialize Metal device
         guard let device = MTLCreateSystemDefaultDevice() else {
             print("ERROR: Metal is not supported on this device")
             return nil
@@ -48,21 +44,18 @@ class DaemonController {
 
         print("Metal device: \(device.name)")
 
-        // Initialize headless renderer
         guard let renderer = HeadlessMetalRenderer(preset: currentPreset) else {
             print("ERROR: Failed to create HeadlessMetalRenderer")
             return nil
         }
         self.headlessRenderer = renderer
 
-        // Initialize frame exporter
         guard let exporter = FrameExporter(device: device) else {
             print("ERROR: Failed to create FrameExporter")
             return nil
         }
         self.frameExporter = exporter
 
-        // Initialize iTerm2 bridge
         let framePath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config")
             .appendingPathComponent("iTerm2ShaderCLI")
@@ -70,18 +63,14 @@ class DaemonController {
 
         self.iTerm2Bridge = ITerm2Bridge(framePath: framePath)
 
-        // Check if iTerm2 is running
         if iTerm2Bridge?.isITerm2Running() == false {
-            print("⚠️  WARNING: iTerm2 is not running - background sync will not work")
+            print("WARNING: iTerm2 is not running")
         }
 
-        // Setup UNIX signal handlers
         setupSignalHandlers()
 
-        print("✅ Daemon controller initialized")
+        print("Daemon controller initialized")
         print("Current preset: \(currentPreset.name)")
-        print("")
-
         listAvailablePresets()
     }
 
@@ -97,20 +86,17 @@ class DaemonController {
 
         if let index = allPresets.firstIndex(where: { $0.name == savedPresetName }) {
             currentPresetIndex = index
-            print("Loaded saved preset: \(savedPresetName)")
         } else {
             currentPresetIndex = 0
-            print("No saved preset found, using default: \(allPresets[0].name)")
         }
     }
 
     private func listAvailablePresets() {
         print("Available presets:")
         for (index, preset) in allPresets.enumerated() {
-            let marker = index == currentPresetIndex ? "→" : " "
+            let marker = index == currentPresetIndex ? ">" : " "
             print("  \(marker) \(index + 1). \(preset.name)")
         }
-        print("")
     }
 
     // MARK: - Render Loop
@@ -124,23 +110,18 @@ class DaemonController {
             self?.renderFrame()
         }
 
-        renderTimer?.tolerance = 0.001  // 1ms tolerance
+        renderTimer?.tolerance = 0.005
 
-        // Add to main run loop
         if let timer = renderTimer {
             RunLoop.main.add(timer, forMode: .common)
         }
 
-        print("✅ Render loop started")
+        print("Render loop started")
     }
 
     func stop() {
-        print("Stopping render loop...")
-
         renderTimer?.invalidate()
         renderTimer = nil
-
-        print("✅ Render loop stopped")
     }
 
     private func renderFrame() {
@@ -150,127 +131,103 @@ class DaemonController {
             return
         }
 
-        // Render frame to Metal texture
         guard let texture = renderer.renderFrame() else {
-            return  // Frame skipped (throttling)
-        }
-
-        // Export texture to PNG file
-        guard exporter.exportFrame(texture: texture) else {
-            if frameCount % 100 == 0 {
-                print("⚠️  Frame export failed at frame \(frameCount)")
-            }
             return
         }
 
-        // Notify iTerm2 of new frame
+        guard exporter.exportFrame(texture: texture) else {
+            return
+        }
+
         bridge.notifyFrameUpdate()
 
         frameCount += 1
-
-        // Log every 30 frames (once per second at 30 FPS)
-        if frameCount % 30 == 0 {
-            print("[\(frameCount) frames] Preset: \(currentPreset.name)")
-        }
     }
 
-    // MARK: - UNIX Signal Handling
+    // MARK: - Signal Handling (Pure GCD, no raw signal() traps)
 
     private func setupSignalHandlers() {
+        // Block default signal actions at the process level
         signal(SIGUSR1, SIG_IGN)
         signal(SIGUSR2, SIG_IGN)
         signal(SIGTERM, SIG_IGN)
 
-        // USR1/USR2 dispatch to a dedicated serial queue to avoid blocking main RunLoop
+        // GCD dispatch sources on a dedicated utility queue — never touches main thread
         signalSourceUSR1 = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: signalQueue)
         signalSourceUSR1?.setEventHandler { [weak self] in
-            self?.safePresetSwitch { self?.nextPreset() }
+            self?.handleNextPreset()
         }
         signalSourceUSR1?.resume()
 
         signalSourceUSR2 = DispatchSource.makeSignalSource(signal: SIGUSR2, queue: signalQueue)
         signalSourceUSR2?.setEventHandler { [weak self] in
-            self?.safePresetSwitch { self?.previousPreset() }
+            self?.handlePreviousPreset()
         }
         signalSourceUSR2?.resume()
 
-        signalSourceTERM = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        signalSourceTERM = DispatchSource.makeSignalSource(signal: SIGTERM, queue: signalQueue)
         signalSourceTERM?.setEventHandler { [weak self] in
-            self?.gracefulShutdown()
+            self?.handleTermination()
         }
         signalSourceTERM?.resume()
-
-        print("UNIX signal handlers configured")
-    }
-
-    private func safePresetSwitch(_ action: @escaping () -> Void) {
-        guard !isProcessingSignal else { return }
-        isProcessingSignal = true
-        DispatchQueue.main.async { [weak self] in
-            action()
-            self?.isProcessingSignal = false
-        }
     }
 
     private func cleanupSignalHandlers() {
         signalSourceUSR1?.cancel()
         signalSourceUSR2?.cancel()
         signalSourceTERM?.cancel()
-
         signalSourceUSR1 = nil
         signalSourceUSR2 = nil
         signalSourceTERM = nil
     }
 
-    // MARK: - Preset Switching
+    // MARK: - Async Preset Switching (never blocks render loop)
 
-    private func nextPreset() {
-        let oldPreset = currentPreset.name
+    private func handleNextPreset() {
+        guard !isSwitchingPreset else { return }
+        isSwitchingPreset = true
 
-        currentPresetIndex = (currentPresetIndex + 1) % allPresets.count
-        let newPreset = currentPreset
+        presetSwapQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        switchToCurrentPreset(from: oldPreset, to: newPreset.name)
+            self.currentPresetIndex = (self.currentPresetIndex + 1) % self.allPresets.count
+            self.performPresetSwitch()
+        }
     }
 
-    private func previousPreset() {
-        let oldPreset = currentPreset.name
+    private func handlePreviousPreset() {
+        guard !isSwitchingPreset else { return }
+        isSwitchingPreset = true
 
-        currentPresetIndex = (currentPresetIndex - 1 + allPresets.count) % allPresets.count
-        let newPreset = currentPreset
+        presetSwapQueue.async { [weak self] in
+            guard let self = self else { return }
 
-        switchToCurrentPreset(from: oldPreset, to: newPreset.name)
+            self.currentPresetIndex = (self.currentPresetIndex - 1 + self.allPresets.count) % self.allPresets.count
+            self.performPresetSwitch()
+        }
     }
 
-    private func switchToCurrentPreset(from: String, to: String) {
-        print("")
-        print("🔄 Preset Switch Signal Received")
-        print("   From: \(from)")
-        print("   To:   \(to)")
+    private func performPresetSwitch() {
+        let newPreset = currentPreset
 
-        // Switch renderer to new preset
-        headlessRenderer?.switchPreset(currentPreset)
+        // Pipeline recompilation happens off-main — renderer uses semaphore internally
+        headlessRenderer?.switchPreset(newPreset)
 
-        // Save to settings
-        SettingsManager.shared.activePresetName = currentPreset.name
+        SettingsManager.shared.activePresetName = newPreset.name
 
-        // Force iTerm2 refresh
+        // iTerm2 refresh on background thread (AppleScript is thread-safe)
         iTerm2Bridge?.forceUpdateViaAppleScript()
 
-        print("✅ Switched to preset: \(to)")
-        print("")
-
+        print("Switched to preset: \(newPreset.name)")
         listAvailablePresets()
+
+        isSwitchingPreset = false
     }
 
-    private func gracefulShutdown() {
-        print("")
-        print("🛑 SIGTERM received - Graceful shutdown initiated")
-
-        stop()
-
-        print("✅ Shutdown complete")
-
-        exit(0)
+    private func handleTermination() {
+        DispatchQueue.main.async { [weak self] in
+            self?.stop()
+            exit(0)
+        }
     }
 }

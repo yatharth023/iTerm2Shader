@@ -2,9 +2,6 @@ import Metal
 import MetalKit
 import CoreGraphics
 
-// MILESTONE 7: Headless Metal renderer for daemon architecture
-// Renders to offscreen textures instead of MTKView drawable
-
 class HeadlessMetalRenderer {
 
     private let device: MTLDevice
@@ -14,8 +11,8 @@ class HeadlessMetalRenderer {
 
     // Offscreen render target
     private var renderTexture: MTLTexture?
-    private let renderWidth: Int = 1920   // Reduced from 2880 for better performance
-    private let renderHeight: Int = 1200  // Reduced from 1800 for better performance
+    private let renderWidth: Int = 1920
+    private let renderHeight: Int = 1200
 
     private var preset: ShaderPreset
     private var parameters: PresetParameters
@@ -26,9 +23,12 @@ class HeadlessMetalRenderer {
 
     private var isPaused: Bool = false
 
-    // Frame timing for 60 FPS target (smooth animation)
+    // Frame timing
     private var lastFrameTime: CFTimeInterval = 0.0
     private let targetFrameInterval: CFTimeInterval = 1.0 / 60.0
+
+    // Thread-safe pipeline swap gate
+    private let pipelineLock = DispatchSemaphore(value: 1)
 
     init?(preset: ShaderPreset) {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -111,7 +111,8 @@ class HeadlessMetalRenderer {
     }
 
     func switchPreset(_ newPreset: ShaderPreset) {
-        print("Switching preset to: \(newPreset.name)")
+        // Acquire lock — render loop will skip frames during pipeline recompilation
+        pipelineLock.wait()
 
         self.preset = newPreset
 
@@ -123,10 +124,11 @@ class HeadlessMetalRenderer {
 
         guard createPipelineState() else {
             print("ERROR: Failed to recreate pipeline state for new preset")
+            pipelineLock.signal()
             return
         }
 
-        print("Preset switched successfully to: \(newPreset.name)")
+        pipelineLock.signal()
     }
 
     func updateParameters(_ newParameters: PresetParameters) {
@@ -175,13 +177,20 @@ class HeadlessMetalRenderer {
         print("HeadlessRenderer resumed")
     }
 
-    // Render a single frame and return the Metal texture
-    // Called by frame export pipeline at 60 FPS
     func renderFrame() -> MTLTexture? {
         guard !isPaused,
               let renderTexture = renderTexture,
-              let pipelineState = pipelineState,
               let commandBuffer = commandQueue.makeCommandBuffer() else {
+            return nil
+        }
+
+        // Non-blocking gate: skip frame if pipeline is being recompiled
+        guard pipelineLock.wait(timeout: .now()) == .success else {
+            return nil
+        }
+
+        guard let pipelineState = pipelineState else {
+            pipelineLock.signal()
             return nil
         }
 
@@ -190,7 +199,8 @@ class HeadlessMetalRenderer {
         let timeSinceLastFrame = currentTime - lastFrameTime
 
         if timeSinceLastFrame < targetFrameInterval {
-            return nil  // Skip frame to maintain 60 FPS
+            pipelineLock.signal()
+            return nil
         }
 
         lastFrameTime = currentTime
@@ -204,6 +214,7 @@ class HeadlessMetalRenderer {
         renderPassDescriptor.colorAttachments[0].storeAction = .store
 
         guard let renderEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
+            pipelineLock.signal()
             return nil
         }
 
@@ -216,10 +227,9 @@ class HeadlessMetalRenderer {
         renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         renderEncoder.endEncoding()
 
-        commandBuffer.commit()
+        pipelineLock.signal()
 
-        // MUST wait for render to complete before texture can be read
-        // This is required to prevent tearing/corruption
+        commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
 
         return renderTexture
