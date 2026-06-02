@@ -24,28 +24,9 @@ print("  kill -USR2 \(ProcessInfo.processInfo.processIdentifier)  # Previous pre
 print("  kill -TERM \(ProcessInfo.processInfo.processIdentifier)  # Graceful shutdown")
 print("")
 
-// Orphan lifecycle monitor: if parent terminal exits, getppid() becomes 1 (launchd)
-// - 15s boot grace period to survive shell fork handoff
-// - 5s check interval with 3 consecutive confirmations (15s sustained orphan) before exit
-// - Resets immediately on any valid parent reading (survives signal burst transients)
-let bootTime = Date()
-var deadParentTicks = 0
-
-let parentCheckTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-    guard Date().timeIntervalSince(bootTime) > 15.0 else { return }
-
-    if getppid() == 1 {
-        deadParentTicks += 1
-        if deadParentTicks >= 3 {
-            print("Parent process confirmed dead (\(deadParentTicks) consecutive checks) — shutting down")
-            daemon.stop()
-            exit(0)
-        }
-    } else {
-        deadParentTicks = 0
-    }
-}
-RunLoop.main.add(parentCheckTimer, forMode: .common)
+// Note: Background daemons launched with & are typically adopted by PID 1 (launchd/init)
+// This is normal and expected behavior for UNIX daemons.
+// The daemon should run until explicitly stopped via SIGTERM (iterm2-shader stop)
 
 // Keep the main thread alive with a RunLoop
 RunLoop.main.run()

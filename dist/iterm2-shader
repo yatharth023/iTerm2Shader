@@ -1,0 +1,99 @@
+#!/bin/bash
+ENGINE="/opt/homebrew/bin/iterm2-shader-engine"
+PROCESS_NAME="iterm2-shader-engine"
+
+clear_iterm_bg() {
+  osascript -e 'tell application "iTerm2" to set background image of current session of current window to ""' 2>/dev/null
+}
+
+usage() {
+  cat <<'HELP'
+┌─────────────────────────────────────────────────────┐
+│           iterm2-shader · CLI Interface              │
+│   Premium GPU-Accelerated Terminal Shader Engine     │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  USAGE:                                             │
+│    iterm2-shader <command>                           │
+│                                                     │
+│  COMMANDS:                                          │
+│    start    Launch the shader daemon (background)   │
+│    stop     Stop the running shader daemon          │
+│    next     Cycle to the next shader preset         │
+│    prev     Cycle to the previous shader preset     │
+│    list     Show all available shader presets       │
+│                                                     │
+│  EXAMPLES:                                          │
+│    iterm2-shader start                              │
+│    iterm2-shader next                               │
+│    iterm2-shader stop                               │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+HELP
+}
+
+case "${1}" in
+  start)
+    if pgrep -x "$PROCESS_NAME" > /dev/null 2>&1; then
+      echo "▸ Clearing stale daemon instance..."
+      killall -9 "$PROCESS_NAME" >/dev/null 2>&1
+      sleep 0.3
+      clear_iterm_bg
+    fi
+    "$ENGINE" > /dev/null 2>&1 &
+    echo "▸ Shader daemon launched (PID $!)"
+    ;;
+  stop)
+    if pgrep -x "$PROCESS_NAME" > /dev/null 2>&1; then
+      killall "$PROCESS_NAME" 2>/dev/null
+      COUNTER=0
+      while pgrep -x "$PROCESS_NAME" > /dev/null 2>&1 && [ $COUNTER -lt 30 ]; do
+        sleep 0.1
+        COUNTER=$((COUNTER + 1))
+      done
+      clear_iterm_bg
+      echo "▸ Shader daemon stopped"
+    else
+      echo "▸ No shader daemon running"
+    fi
+    ;;
+  next)
+    if pgrep -x "$PROCESS_NAME" > /dev/null 2>&1; then
+      pkill -USR1 "$PROCESS_NAME"
+      echo "▸ Switched to next preset"
+    else
+      echo "▸ No shader daemon running — start it with: iterm2-shader start"
+    fi
+    ;;
+  prev)
+    if pgrep -x "$PROCESS_NAME" > /dev/null 2>&1; then
+      pkill -USR2 "$PROCESS_NAME"
+      echo "▸ Switched to previous preset"
+    else
+      echo "▸ No shader daemon running — start it with: iterm2-shader start"
+    fi
+    ;;
+  list)
+    cat <<'PRESETS'
+┌─────────────────────────────────────────────────────┐
+│              Available Shader Presets                │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│   1.  Spaceflight            Star field flythrough  │
+│   2.  Night-Sky-Flight       Starry night clouds    │
+│   3.  Morning-Sky-Flight     Sunrise golden hour    │
+│   4.  Ocean-Wave-Flight      Realistic ocean waves  │
+│   5.  Evening-Sky-Flight     Sunset atmosphere      │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+PRESETS
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    echo "Unknown command: ${1}"
+    echo "Run 'iterm2-shader --help' for usage information."
+    exit 1
+    ;;
+esac

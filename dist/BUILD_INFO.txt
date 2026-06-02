@@ -3,14 +3,15 @@ Build Information
 Project: iterm2-shader-engine
 Version: 2026.05.28
 Configuration: release
-Build Date: Fri May 29 00:53:29 IST 2026
-SHA256: bde507f73e92444e1bd8bcb715233f0af1e527a3a8102df3f228971a403916cb
+Build Date: Tue Jun  2 14:42:18 IST 2026
+SHA256: 7dd1fa35a3d042fc4c71e2c0bc4321a61e4e7809b141fdc743d50a5fdf5ffd06
 Architecture: arm64 (Apple Silicon)
 Target: macOS 13.0+
 
 Contents:
   - iterm2-shader-engine (standalone binary)
   - default.metallib (compiled Metal shaders)
+  - iterm2-shader (CLI wrapper script)
 
 Installation:
   brew tap yatharthkhattri/tap

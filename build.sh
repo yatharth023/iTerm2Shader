@@ -92,17 +92,19 @@ echo -e "${GREEN}✅ Binary verified${NC}"
 # Package for distribution
 echo -e "\n${YELLOW}[5/5] Packaging distribution...${NC}"
 
-# Copy binary and metallib to dist
+# Copy binary, metallib, and wrapper script to dist
 cp "${BUILD_DIR}/${PROJECT_NAME}" "${DIST_DIR}/"
 cp "${BUILD_DIR}/default.metallib" "${DIST_DIR}/"
+cp "Packaging/iterm2-shader" "${DIST_DIR}/"
 
-# Make binary executable
+# Make binaries executable
 chmod +x "${DIST_DIR}/${PROJECT_NAME}"
+chmod +x "${DIST_DIR}/iterm2-shader"
 
 # Create tarball
 cd "${DIST_DIR}"
 TARBALL_NAME="PremiumTerminalShader-${VERSION}.tar.gz"
-tar -czf "${TARBALL_NAME}" "${PROJECT_NAME}" "default.metallib"
+tar -czf "${TARBALL_NAME}" "${PROJECT_NAME}" "default.metallib" "iterm2-shader"
 cd ..
 
 echo -e "${GREEN}✅ Created tarball: ${DIST_DIR}/${TARBALL_NAME}${NC}"
@@ -139,6 +141,7 @@ Target: macOS 13.0+
 Contents:
   - ${PROJECT_NAME} (standalone binary)
   - default.metallib (compiled Metal shaders)
+  - iterm2-shader (CLI wrapper script)
 
 Installation:
   brew tap yatharthkhattri/tap
