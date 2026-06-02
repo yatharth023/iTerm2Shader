@@ -93,13 +93,7 @@ Temporary Items
 .claude/
 
 # Distribution artifacts (binaries should not be in Git, only in releases)
-dist/*.dSYM
-dist/*.swiftmodule/
-dist/Debug/
-dist/PremiumTerminalShader.app
-dist/PremiumTerminalShader.app.dSYM
-dist/*.tar.gz
-dist/*.zip
+dist/
 
 # Temporary build files
 *.air

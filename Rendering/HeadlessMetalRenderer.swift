@@ -194,16 +194,8 @@ class HeadlessMetalRenderer {
             return nil
         }
 
-        // Throttle to 60 FPS
-        let currentTime = CACurrentMediaTime()
-        let timeSinceLastFrame = currentTime - lastFrameTime
-
-        if timeSinceLastFrame < targetFrameInterval {
-            pipelineLock.signal()
-            return nil
-        }
-
-        lastFrameTime = currentTime
+        // Remove internal throttling - let DaemonController control FPS
+        lastFrameTime = CACurrentMediaTime()
 
         updateUniforms()
 
@@ -230,7 +222,7 @@ class HeadlessMetalRenderer {
         pipelineLock.signal()
 
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
+        // Don't wait for GPU - let it run asynchronously for better performance
 
         return renderTexture
     }

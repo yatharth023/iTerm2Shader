@@ -17,6 +17,10 @@ class FrameExporter {
     private var pixelBuffer: UnsafeMutableRawPointer?
     private var bufferSize: Int = 0
 
+    // Track write operations to avoid excessive disk I/O
+    private var framesSinceLastWrite: Int = 0
+    private let writeInterval: Int = 1  // Write every frame (but async)
+
     init?(device: MTLDevice) {
         self.device = device
 
@@ -44,6 +48,13 @@ class FrameExporter {
     // Export Metal texture to PNG file
     // Returns true if export succeeded
     func exportFrame(texture: MTLTexture) -> Bool {
+        // Throttle writes to reduce disk I/O overhead
+        framesSinceLastWrite += 1
+        if framesSinceLastWrite < writeInterval {
+            return true
+        }
+        framesSinceLastWrite = 0
+
         let width = texture.width
         let height = texture.height
         let bytesPerPixel = 4
@@ -61,7 +72,7 @@ class FrameExporter {
 
         guard let buffer = pixelBuffer else { return false }
 
-        // Read texture data into CPU buffer
+        // Read texture data into CPU buffer (synchronous - unavoidable bottleneck)
         let region = MTLRegionMake2D(0, 0, width, height)
         texture.getBytes(buffer, bytesPerRow: bytesPerRow, from: region, mipmapLevel: 0)
 
