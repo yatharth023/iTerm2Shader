@@ -8,7 +8,7 @@ class DaemonController {
     private var iTerm2Bridge: ITerm2Bridge?
 
     private var renderTimer: Timer?
-    private let targetFPS: Double = 60.0  // Increased from 30 to 60 FPS for smoother animation
+    private let targetFPS: Double = 45.0  // Balanced FPS for smooth rendering with lower overhead
     private var frameCount: Int = 0
 
     private let allPresets: [ShaderPreset] = [

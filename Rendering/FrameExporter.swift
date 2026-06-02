@@ -108,13 +108,19 @@ class FrameExporter {
             return false
         }
 
-        // Write directly to output file (atomic writes cause issues with temp file cleanup)
+        // Write directly to output file with optimized compression
         guard let destination = CGImageDestinationCreateWithURL(outputPath as CFURL, UTType.png.identifier as CFString, 1, nil) else {
             print("ERROR: Failed to create image destination")
             return false
         }
 
-        CGImageDestinationAddImage(destination, cgImage, nil)
+        // Use lower compression for faster writes (quality vs speed tradeoff)
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.8,  // Slightly lossy for speed
+            kCGImagePropertyHasAlpha: false  // No alpha channel needed
+        ]
+
+        CGImageDestinationAddImage(destination, cgImage, options as CFDictionary)
 
         guard CGImageDestinationFinalize(destination) else {
             print("ERROR: Failed to finalize image destination")

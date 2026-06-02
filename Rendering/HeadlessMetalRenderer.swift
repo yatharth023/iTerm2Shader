@@ -9,10 +9,11 @@ class HeadlessMetalRenderer {
     private var pipelineState: MTLRenderPipelineState?
     private var uniformBuffer: MTLBuffer?
 
-    // Offscreen render target
+    // Offscreen render target - reduced resolution for better performance
+    // iTerm2 scales the image anyway, so 1280x800 provides good quality with less overhead
     private var renderTexture: MTLTexture?
-    private let renderWidth: Int = 1920
-    private let renderHeight: Int = 1200
+    private let renderWidth: Int = 1280
+    private let renderHeight: Int = 800
 
     private var preset: ShaderPreset
     private var parameters: PresetParameters
@@ -219,10 +220,13 @@ class HeadlessMetalRenderer {
         renderEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         renderEncoder.endEncoding()
 
-        pipelineLock.signal()
-
         commandBuffer.commit()
-        // Don't wait for GPU - let it run asynchronously for better performance
+
+        // Wait for this specific frame to complete to avoid artifacts
+        // This is necessary because FrameExporter reads the texture immediately
+        commandBuffer.waitUntilCompleted()
+
+        pipelineLock.signal()
 
         return renderTexture
     }

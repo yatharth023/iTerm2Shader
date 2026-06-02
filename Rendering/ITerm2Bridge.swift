@@ -5,7 +5,7 @@ class ITerm2Bridge {
     private let framePath: URL
     private let absoluteFilePath: String
     private var lastUpdateTime: Double = 0.0
-    private let updateInterval: Double = 1.0 / 30.0  // Reduced from 45 to 30 FPS - iTerm2 AppleScript is expensive
+    private let updateInterval: Double = 1.0 / 24.0  // 24 FPS for iTerm2 updates - reduces AppleScript overhead
 
     private let scriptQueue = DispatchQueue(label: "com.shader.iterm2bridge", qos: .utility)
     private var isUpdating = false
